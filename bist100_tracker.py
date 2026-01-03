@@ -63,56 +63,64 @@ def get_bist100_list():
 def get_stock_data(tickers):
     """
     Fetches the last 5 days of data for the given tickers using yfinance.
+    Fetches individually to handle errors better.
     """
     if not tickers:
         print("No tickers provided.")
-        return
+        return {}
 
-    # Append .IS for Yahoo Finance
-    yf_tickers = [f"{t}.IS" for t in tickers]
+    print(f"Fetching data for {len(tickers)} stocks (this may take a moment)...")
     
-    print(f"Downloading data for {len(yf_tickers)} stocks...")
+    stock_data = {}
     
-    # Batch download
-    # period='5d' gets the last 5 days
-    data = yf.download(yf_tickers, period="5d", group_by='ticker', auto_adjust=True, threads=True)
-    
-    return data
+    for ticker in tickers:
+        try:
+            full_ticker = f"{ticker}.IS"
+            # Using Ticker object often provides better error isolation than bulk download
+            # and avoids some multi-index complexity issues
+            stock = yf.Ticker(full_ticker)
+            hist = stock.history(period="5d")
+            
+            # Check type specifically to avoid AttributeError if a dict is returned
+            if isinstance(hist, pd.DataFrame) and not hist.empty:
+                stock_data[ticker] = hist
+            # else:
+            #     print(f"No data for {ticker}")
+                
+        except Exception as e:
+            print(f"Error fetching {ticker}: {e}")
+            
+    return stock_data
 
-def display_data(tickers, data):
+def display_data(tickers, data_dict):
     print("\n" + "="*50)
     print("BIST 100 STOCK PRICES (LAST 5 DAYS)")
     print("="*50 + "\n")
     
+    success_count = 0
     for ticker in tickers:
-        yf_ticker = f"{ticker}.IS"
-        try:
-            # Access the dataframe for this ticker
-            # yfinance structure varies depending on single vs multi ticker
-            # If multi-ticker, data columns are MultiIndex (Ticker, PriceType)
+        if ticker in data_dict:
+            df = data_dict[ticker]
             
-            if len(tickers) > 1:
-                df = data[yf_ticker]
-            else:
-                df = data
-            
-            # Check if empty
-            if df.empty:
-                print(f"{ticker}: No data found.")
-                continue
+            try:
+                last_price = df['Close'].iloc[-1]
+                first_price_5d = df['Close'].iloc[0]
                 
-            last_price = df['Close'].iloc[-1]
-            first_price_5d = df['Close'].iloc[0]
-            change = ((last_price - first_price_5d) / first_price_5d) * 100
-            
-            print(f"--- {ticker} ---")
-            print(df[['Close']].tail(5)) # Show last 5 rows of Close
-            print(f"Change (5d): {change:.2f}%\n")
-            
-        except KeyError:
-            print(f"{ticker}: Data fetch failed or key error.")
-        except Exception as e:
-            pass # print(f"{ticker}: Error {e}")
+                # Check for zero division
+                if first_price_5d == 0:
+                     change = 0
+                else:
+                    change = ((last_price - first_price_5d) / first_price_5d) * 100
+                
+                print(f"--- {ticker} ---")
+                # Format the date nicely if possible, or just print the tail
+                print(df[['Close']].tail(5)) 
+                print(f"Change (5d): {change:.2f}%\n")
+                success_count += 1
+            except Exception as e:
+                print(f"Error calculating stats for {ticker}: {e}")
+    
+    print(f"Successfully displayed data for {success_count} / {len(tickers)} stocks.")
 
 if __name__ == "__main__":
     print("Starting BIST 100 Tracker...")
@@ -136,7 +144,7 @@ if __name__ == "__main__":
     df_data = get_stock_data(symbols)
     
     # 3. Display
-    if df_data is not None and not df_data.empty:
+    if df_data:
         display_data(symbols, df_data)
     else:
         print("No stock data retrieved.")
